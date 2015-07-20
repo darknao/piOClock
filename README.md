@@ -23,4 +23,10 @@ This is how the first version looks like.
 - RaspberryPi A+
 - [adafruit OLED 1.27" display](http://www.adafruit.com/products/1673) (it's damn small, maybe too much)
 
-
+## Dependencies ##
+- spidev (SPI)
+- wiringpi2 (GPIO)
+- PIL (ImageDraw)
+- numpy (fast RGB565 convertion)
+- python-mpd2 (mpd client)
+- alsaaudio (mixer control)
