@@ -169,7 +169,7 @@ class Clock(object):
 # Wiringpy pin number, NOT RPI PIN! see here: http://wiringpi.com/pins/
 RESET_PIN = 15
 DC_PIN = 16
-led = ssd1351.SSD1351(reset_pin=RESET_PIN, dc_pin=DC_PIN, rows=96, buffer_rows=96)
+led = ssd1351.SSD1351(reset_pin=RESET_PIN, dc_pin=DC_PIN, rows=96)
 clk = Clock(led)
 
 # For buttons, or encoders, check for interrupts (https://pythonhosted.org/RPIO/rpio_py.html)
