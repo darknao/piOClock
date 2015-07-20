@@ -11,36 +11,39 @@ from mpd import MPDClient, ConnectionError
 import alsaaudio
 
 
-class HWmonitor(threading.Thread):
-    """docstring for HWmonitor"""
+class Thread(threading.Thread):
     def __init__(self):
-        super(HWmonitor, self).__init__()
+        super(Thread, self).__init__()
         self.log = logging.getLogger(self.__class__.__name__)
         self.log.setLevel(logging.DEBUG)
-        self.cpu = 0
         self.must_stop = threading.Event()
         self.lock = threading.Lock()
-
-    def run(self):
-        self.log.debug("%s thread started" % self.name)
-        while not self.must_stop:
-            cpu = psutil.cpu_percent()
-            self.lock.acquire()
-            self.cpu = cpu
-            self.lock.release()
-            self.must_stop.wait(5)
 
     def stop(self):
         self.log.debug("%s request stop" % self.name)
         self.must_stop.set()
 
 
-class MPlayer(threading.Thread):
+class HWmonitor(Thread):
+    """docstring for HWmonitor"""
+    def __init__(self):
+        super(HWmonitor, self).__init__()
+        self.cpu = 0
+
+    def run(self):
+        self.log.debug("%s thread started" % self.name)
+        while not self.must_stop.is_set():
+            cpu = psutil.cpu_percent()
+            self.lock.acquire()
+            self.cpu = cpu
+            self.lock.release()
+            self.must_stop.wait(5)
+
+
+class MPlayer(Thread):
     """docstring for MPlayer"""
     def __init__(self):
         super(MPlayer, self).__init__()
-        self.log = logging.getLogger(self.__class__.__name__)
-        self.log.setLevel(logging.DEBUG)
         self.title = ""
         # MPlayer daemon
         self.mpd = MPDClient()
@@ -51,12 +54,9 @@ class MPlayer(threading.Thread):
             if 'title' in song:
                 self.title = "%s - %s" % (song['title'], song['name'], )
 
-        self.must_stop = False
-        self.lock = threading.Lock()
-
     def run(self):
         self.log.debug("%s thread started" % self.name)
-        while not self.must_stop:
+        while not self.must_stop.is_set():
             try:
                 events = self.mpd.idle()
                 if 'player' in events:
@@ -74,30 +74,25 @@ class MPlayer(threading.Thread):
                     self.lock.release()
             except ConnectionError, e:
                 # reconnect
-                if self.must_stop:
+                if self.must_stop.is_set():
                     break
                 self.log.warning("lost connection, reconnecting...")
                 self.mpd.connect("localhost", 6600)
                 title = ""
 
     def stop(self):
-        self.log.debug("%s request stop" % self.name)
-        self.must_stop = True
+        super(MPlayer, self).stop()
         self.mpd.close()
 
 
-class TempNode(threading.Thread):
+class TempNode(Thread):
     def __init__(self, addr=None):
-        threading.Thread.__init__(self)
+        super(TempNode, self).__init__()
         if addr is None:
             self.device = self.autodetect()
         else:
             self.device = self.get_device(addr)
-        self.log = logging.getLogger(self.__class__.__name__)
-        self.log.setLevel(logging.DEBUG)
         self.temp = 0
-        self.must_stop = threading.Event()
-        self.lock = threading.Lock()
 
     def run(self):
         self.log.debug("%s thread started" % self.name)
@@ -107,10 +102,6 @@ class TempNode(threading.Thread):
             self.temp = temp
             self.lock.release()
             self.must_stop.wait(60*5)
-
-    def stop(self):
-        self.log.debug("%s request stop" % self.name)
-        self.must_stop.set()
 
     def autodetect(self):
         base_dir = '/sys/bus/w1/devices/'
@@ -135,15 +126,11 @@ class TempNode(threading.Thread):
             self.log.warning("crc: %s" % crc)
 
 
-class Audio(threading.Thread):
+class Audio(Thread):
     """docstring for Audio"""
     def __init__(self):
         super(Audio, self).__init__()
-        self.log = logging.getLogger(self.__class__.__name__)
-        self.log.setLevel(logging.DEBUG)
         self.volume = 0
-        self.must_stop = threading.Event()
-        self.lock = threading.Lock()
 
     def run(self):
         self.log.debug("%s thread started" % self.name)
@@ -155,6 +142,3 @@ class Audio(threading.Thread):
             self.lock.release()
             self.must_stop.wait(10)
 
-    def stop(self):
-        self.log.debug("%s request stop" % self.name)
-        self.must_stop.set()
