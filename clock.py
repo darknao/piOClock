@@ -11,6 +11,7 @@ import logging
 import os
 import locale
 import th
+import threading
 
 log = logging.getLogger("main")
 logging.basicConfig(
@@ -21,6 +22,9 @@ locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
 
 class Clock(object):
     """docstring for Clock"""
+    alarm = ""
+    alarm_running = False
+
     def __init__(self, oled):
         self.log = logging.getLogger(self.__class__.__name__)
         self.log.setLevel(logging.DEBUG)
@@ -51,17 +55,25 @@ class Clock(object):
         # MPlayer daemon
         w, h = self.oled.draw_text(0, 20, "MPD :", "white", size=16)
         self.display()
-        self.mpd_thread = th.MPlayer()
-        self.mpd_thread.start()
-        self.oled.draw_text(w+2, 20, "OK", "green", size=16)
+        try:
+            self.mpd_thread = th.MPlayer()
+            self.mpd_thread.start()
+            self.oled.draw_text(w+2, 20, "OK", "green", size=16)
+        except Exception, e:
+            self.oled.draw_text(w+2, 20, "KO", "red", size=16)
+            self.d_mplayer = self.d_void
         self.display()
 
         # Temp sensor
         w, h = self.oled.draw_text(0, 40, "Temp :", "white", size=16)
         self.display()
-        self.temp_node = th.TempNode()
-        self.temp_node.start()
-        self.oled.draw_text(w+2, 40, "OK", "green", size=16)
+        try:
+            self.temp_node = th.TempNode()
+            self.temp_node.start()
+            self.oled.draw_text(w+2, 40, "OK", "green", size=16)
+        except Exception, e:
+            self.oled.draw_text(w+2, 40, "KO", "red", size=16)
+            self.d_temp = self.d_void
         self.display()
 
         # HWmonitor
@@ -82,18 +94,15 @@ class Clock(object):
 
     def stop_all(self):
         self.log.debug("stopping all thread...")
-        self.temp_node.stop()
-        self.hwm_thread.stop()
-        self.mpd_thread.stop()
-        self.audio_thread.stop()
-        self.mpd_thread.join()
-        self.log.debug("thread %s terminated" % self.mpd_thread.__class__.__name__)
-        self.hwm_thread.join()
-        self.log.debug("thread %s terminated" % self.hwm_thread.__class__.__name__)
-        self.temp_node.join()
-        self.log.debug("thread %s terminated" % self.temp_node.__class__.__name__)
-        self.audio_thread.join()
-        self.log.debug("thread %s terminated" % self.audio_thread.__class__.__name__)
+        for thread in threading.enumerate():
+            if thread.name == "MainThread":
+                continue
+            thread.stop()
+        # for thread in threading.enumerate():
+        #     if thread.name == "MainThread":
+        #         continue
+        #     thread.join()
+        #     self.log.debug("thread %s terminated" % thread.__class__.__name__)
         self.log.debug("stopping all thread complete!")
 
     def d_clock(self):
@@ -109,9 +118,35 @@ class Clock(object):
             self.oled.draw.rectangle([(58, 37), (67, 60)], fill="#000000")
         self.now = now
 
+    def d_alarm(self):
+        # check alarm
+        if not self.alarm_running and self.now.strftime("%H:%M") == self.alarm:
+            # wake up!
+            self.log.info("Wake up !")
+            # start mpc
+            with self.mpd_thread.lock:
+                status = self.mpd_thread.status
+            if status['state'] != "play":
+                try:
+                    self.mpd_thread.rise()
+                    self.alarm_running = True
+                except Exception, e:
+                    self.log.exception(e)
+            else:
+                self.log.warning("radio already playing? ok...")
+                self.alarm_running = True
+        if self.alarm_running and self.now.hour > int(self.alarm.split(":")[0]) + 1:
+            self.log.info("time to shut up!")
+            self.mpd_thread.stop_playing()
+            self.alarm_running = False
+
     def d_signal(self):
         """get signal power and display it on screen"""
-        self.oled.im.paste(self.signal[0], (0, 0))
+        self.hwm_thread.lock.acquire()
+        wifi = self.hwm_thread.wifi_signal
+        self.hwm_thread.lock.release()
+        signal = int(wifi / 100.0 * 4)
+        self.oled.im.paste(self.signal[signal], (0, 0))
 
     def d_cpu(self):
         self.hwm_thread.lock.acquire()
@@ -143,6 +178,9 @@ class Clock(object):
                 self.oled.set_contrast(10)
         else:
             # draw pause or whatever icon here...
+            # alarm is not running anymore (if any)
+            if self.alarm_running and self.now.strftime("%H:%M") != self.alarm:
+                self.alarm_running = False
             # reset scrolling
             self.scroll_txt = self.oled.cols
             if self.oled.contrast != 1:
@@ -165,7 +203,8 @@ class Clock(object):
         volume_bar = volume / 100.0 * 40
         self.oled.draw.line([(44, 3), (44+volume_bar, 3)], fill="#006600")
 
-
+    def d_void(self):
+        pass
 # Wiringpy pin number, NOT RPI PIN! see here: http://wiringpi.com/pins/
 RESET_PIN = 15
 DC_PIN = 16
@@ -187,6 +226,8 @@ minutes = now.minute
 time.sleep(1-datetime.datetime.now().microsecond/1000.0/1000.0)
 REFRESH_RATE = 1
 
+# Alarm (fixed for testing purpose)
+clk.alarm = "07:00"
 try:
     while True:
         now = datetime.datetime.now()
@@ -197,9 +238,11 @@ try:
         clk.d_signal()
         clk.d_cpu()
 
+
         clk.d_mplayer()
         clk.d_temp()
         clk.d_audio()
+        clk.d_alarm()
         # clk.oled.draw.line([(0, 16), (128, 16)], fill="#000066")
 
         clk.display()

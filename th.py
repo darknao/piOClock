@@ -9,6 +9,8 @@ import time
 import psutil
 from mpd import MPDClient, ConnectionError
 import alsaaudio
+from pythonwifi.iwlibs import Wireless
+import select
 
 
 class Thread(threading.Thread):
@@ -18,6 +20,7 @@ class Thread(threading.Thread):
         self.log.setLevel(logging.DEBUG)
         self.must_stop = threading.Event()
         self.lock = threading.Lock()
+        self.daemon = True
 
     def stop(self):
         self.log.debug("%s request stop" % self.name)
@@ -29,15 +32,50 @@ class HWmonitor(Thread):
     def __init__(self):
         super(HWmonitor, self).__init__()
         self.cpu = 0
+        self.wifi_signal = 0
+        self.wifi = Wireless('wlan0')
 
     def run(self):
         self.log.debug("%s thread started" % self.name)
         while not self.must_stop.is_set():
             cpu = psutil.cpu_percent()
+            stat, qual, discard, missed_beacon = self.wifi.getStatistics()
             self.lock.acquire()
             self.cpu = cpu
+            self.wifi_signal = qual.signallevel
             self.lock.release()
             self.must_stop.wait(5)
+
+
+class MPlayerControl(Thread):
+    def __init__(self, action=None):
+        super(MPlayerControl, self).__init__()
+        self.mpd = MPDClient()
+        self.mpd.connect("localhost", 6600)
+        self.action = action
+
+    def run(self):
+        self.log.debug("%s thread started" % self.name)
+        if self.action is "play":
+            self.log.debug("play song 4")
+            self.mpd.play(4)
+        if self.action is "stop":
+            self.log.debug("stop playing")
+            self.mpd.stop()
+        if self.action is "rise":
+            # minimum audible volume is ~ 50, max is 95
+            # raise volume every minute for 20 minutes
+            step = (95 - 50) / 20
+            volume = 50
+            self.mpd.setvol(volume)
+            self.mpd.play(4)
+            self.log.debug("play song 4, and raising volume...")
+            while volume < (step*20) and not self.must_stop.is_set():
+                self.must_stop.wait(60)
+                volume += step
+                self.mpd.setvol(volume)
+            self.log.debug("rising complete")
+        self.mpd.close()
 
 
 class MPlayer(Thread):
@@ -53,6 +91,7 @@ class MPlayer(Thread):
             song = self.mpd.currentsong()
             if 'title' in song:
                 self.title = "%s - %s" % (song['title'], song['name'], )
+        self.mpc = None
 
     def run(self):
         self.log.debug("%s thread started" % self.name)
@@ -83,6 +122,24 @@ class MPlayer(Thread):
     def stop(self):
         super(MPlayer, self).stop()
         self.mpd.close()
+
+    def play(self):
+        if self.mpc and self.mpc.is_alive():
+            self.mpc.must_stop.set()
+        self.mpc = MPlayerControl("play")
+        self.mpc.start()
+
+    def rise(self):
+        if self.mpc and self.mpc.is_alive():
+            self.mpc.must_stop.set()
+        self.mpc = MPlayerControl("rise")
+        self.mpc.start()
+
+    def stop_playing(self):
+        if self.mpc and self.mpc.is_alive():
+            self.mpc.must_stop.set()
+        self.mpc = MPlayerControl("stop")
+        self.mpc.start()
 
 
 class TempNode(Thread):
@@ -134,11 +191,22 @@ class Audio(Thread):
 
     def run(self):
         self.log.debug("%s thread started" % self.name)
+        polling = select.poll()
+        mix = alsaaudio.Mixer('PCM')
+        with self.lock:
+            self.volume = mix.getvolume()[0]
         while not self.must_stop.is_set():
-            volume = alsaaudio.Mixer('PCM').getvolume()[0]
-            #self.log.debug("volume: %d" % volume)
-            self.lock.acquire()
-            self.volume = volume
-            self.lock.release()
-            self.must_stop.wait(10)
+            fd, evmsk = mix.polldescriptors()[0]
+            polling.register(fd, evmsk)
 
+            event = polling.poll()
+            for f, e in event:
+                if e & select.POLLIN:
+                    mix = alsaaudio.Mixer('PCM')
+                    volume = mix.getvolume()[0]
+                    if volume != self.volume:
+                        with self.lock:
+                            self.volume = mix.getvolume()[0]
+                        self.log.debug("volume: %d%%" % volume)
+
+            polling.unregister(fd)

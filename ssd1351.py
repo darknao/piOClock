@@ -31,6 +31,7 @@ import logging
 import numpy as np
 import tools
 
+
 class SSD1351:
     # SSD1351 Commands
 
@@ -84,7 +85,7 @@ class SSD1351:
         self.reset_pin = reset_pin
         # SPI
         self.spi = spidev.SpiDev(bus, device)
-        self.spi.max_speed_hz = 16000000 # 16Mhz
+        self.spi.max_speed_hz = 16000000    # 16Mhz
         # GPIO
         self.gpio = wiringpi2.GPIO(wiringpi2.GPIO.WPI_MODE_PINS)
         self.gpio.pinMode(self.reset_pin, self.gpio.OUTPUT)
