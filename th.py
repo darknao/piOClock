@@ -11,6 +11,9 @@ from mpd import MPDClient, ConnectionError
 import alsaaudio
 from pythonwifi.iwlibs import Wireless
 import select
+import RPi.GPIO as gpio
+
+gpio.setmode(gpio.BCM)
 
 
 class Thread(threading.Thread):
@@ -70,7 +73,7 @@ class MPlayerControl(Thread):
             self.mpd.setvol(volume)
             self.mpd.play(4)
             self.log.debug("play song 4, and raising volume...")
-            while volume < (step*20) and not self.must_stop.is_set():
+            while volume < (50 + step*20) and not self.must_stop.is_set():
                 self.must_stop.wait(60)
                 volume += step
                 self.mpd.setvol(volume)
@@ -210,3 +213,34 @@ class Audio(Thread):
                         self.log.debug("volume: %d%%" % volume)
 
             polling.unregister(fd)
+
+class Input(Thread):
+    def __init__(self):
+        super(Input, self).__init__()
+        self.wheel = 0
+        self.has_input = threading.Condition()
+        gpio.setup(17, gpio.IN, gpio.PUD_UP)
+        gpio.setup(27, gpio.IN, gpio.PUD_UP)
+
+
+
+    def run(self):
+        self.log.debug("%s thread started" % self.name)
+        gpio.add_event_detect(17, gpio.FALLING, callback=self.on_low, bouncetime=100)
+
+    def on_low(self, pin):
+        a = gpio.input(17)
+        b = gpio.input(27)
+        vol = 0
+        if a:
+            return
+        if b:
+            vol = 1
+        else:
+            vol = -1
+        if vol != 0:
+            with self.lock:
+                self.wheel += vol
+            #self.has_input.notify()
+            self.log.debug("rotate %s %s" % (vol, self.wheel))
+
