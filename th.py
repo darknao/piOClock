@@ -51,11 +51,12 @@ class HWmonitor(Thread):
 
 
 class MPlayerControl(Thread):
-    def __init__(self, action=None):
+    def __init__(self, action=None, arg=None):
         super(MPlayerControl, self).__init__()
         self.mpd = MPDClient()
         self.mpd.connect("localhost", 6600)
         self.action = action
+        self.arg = arg
 
     def run(self):
         self.log.debug("%s thread started" % self.name)
@@ -78,6 +79,10 @@ class MPlayerControl(Thread):
                 volume += step
                 self.mpd.setvol(volume)
             self.log.debug("rising complete")
+        if self.action is "vol":
+            volume = int(self.arg)
+            self.log.debug("changing volume %d" % volume)
+            self.mpd.setvol(volume)
         self.mpd.close()
 
 
@@ -137,6 +142,13 @@ class MPlayer(Thread):
             self.mpc.must_stop.set()
         self.mpc = MPlayerControl("rise")
         self.mpc.start()
+
+    def vol(self, volume):
+        if self.mpc and self.mpc.is_alive():
+            self.mpc.must_stop.set()
+        if volume <= 100 and volume >= 0:
+            self.mpc = MPlayerControl("vol", volume)
+            self.mpc.start()
 
     def stop_playing(self):
         if self.mpc and self.mpc.is_alive():
@@ -218,10 +230,9 @@ class Input(Thread):
     def __init__(self):
         super(Input, self).__init__()
         self.wheel = 0
-        self.has_input = threading.Condition()
+        self.has_input = threading.Event()
         gpio.setup(17, gpio.IN, gpio.PUD_UP)
         gpio.setup(27, gpio.IN, gpio.PUD_UP)
-
 
 
     def run(self):
@@ -241,6 +252,6 @@ class Input(Thread):
         if vol != 0:
             with self.lock:
                 self.wheel += vol
-            #self.has_input.notify()
+            self.has_input.set()
             self.log.debug("rotate %s %s" % (vol, self.wheel))
 

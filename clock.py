@@ -35,7 +35,10 @@ class Clock(object):
         # self.tick = True
         self.oled.reset()
         self.oled.begin()
-        self.oled.text_center_y(0, "init...", "red", size=16)
+        size = (96 / 6) - 2
+        title_y = 0
+        self.oled.text_center_y(title_y, "init...", "red", size=size)
+        title_y += size + 2
         self.oled.display()
         self.oled.set_contrast(10)
         self.clear = self.oled.clear
@@ -53,56 +56,70 @@ class Clock(object):
         self.now = datetime.datetime.now()
 
         # MPlayer daemon
-        w, h = self.oled.draw_text(0, 20, "MPD :", "white", size=16)
+        w, h = self.oled.draw_text(0, title_y, "MPD :", "white", size=size)
         self.display()
         try:
             self.mpd_thread = th.MPlayer()
             self.mpd_thread.start()
-            self.oled.draw_text(w+2, 20, "OK", "green", size=16)
+            self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
         except Exception, e:
-            self.oled.draw_text(w+2, 20, "KO", "red", size=16)
+            self.oled.draw_text(w+2, title_y, "KO", "red", size=size)
             self.d_mplayer = self.d_void
         self.display()
+        title_y += size + 2
 
         # Temp sensor
-        w, h = self.oled.draw_text(0, 40, "Temp :", "white", size=16)
+        w, h = self.oled.draw_text(0, title_y, "Temp :", "white", size=size)
         self.display()
         try:
             self.temp_node = th.TempNode()
             self.temp_node.start()
-            self.oled.draw_text(w+2, 40, "OK", "green", size=16)
+            self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
         except Exception, e:
-            self.oled.draw_text(w+2, 40, "KO", "red", size=16)
+            self.oled.draw_text(w+2, title_y, "KO", "red", size=size)
             self.d_temp = self.d_void
         self.display()
+        title_y += size + 2
 
         # HWmonitor
-        w, h = self.oled.draw_text(0, 60, "HWmon :", "white", size=16)
+        w, h = self.oled.draw_text(0, title_y, "HWmon :", "white", size=size)
         self.display()
         self.hwm_thread = th.HWmonitor()
         self.hwm_thread.start()
-        self.oled.draw_text(w+2, 60, "OK", "green", size=16)
+        self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
         self.display()
+        title_y += size + 2
 
         # Audio Control
-        w, h = self.oled.draw_text(0, 80, "Audio :", "white", size=16)
+        w, h = self.oled.draw_text(0, title_y, "Audio :", "white", size=size)
         self.display()
         self.audio_thread = th.Audio()
         self.audio_thread.start()
-        self.oled.draw_text(w+2, 80, "OK", "green", size=16)
+        self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
         self.display()
+        title_y += size + 2
+
+        # Input Thread
+        w, h = self.oled.draw_text(0, title_y, "Input :", "white", size=size)
+        self.display()
+        self.input_thread = th.Input()
+        self.input_thread.start()
+        self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
+        self.display()
+        title_y += size + 2
+
 
     def stop_all(self):
         self.log.debug("stopping all thread...")
         for thread in threading.enumerate():
-            if thread.name == "MainThread":
+            # self.log.debug("send stop to  %s" % thread.__class__.__name__)
+            if thread.__class__.__name__ in ("_MainThread", "_DummyThread"):
                 continue
             thread.stop()
         # for thread in threading.enumerate():
         #     if thread.name == "MainThread":
         #         continue
         #     thread.join()
-        #     self.log.debug("thread %s terminated" % thread.__class__.__name__)
         self.log.debug("stopping all thread complete!")
 
     def d_clock(self):
@@ -227,19 +244,32 @@ time.sleep(1-datetime.datetime.now().microsecond/1000.0/1000.0)
 REFRESH_RATE = 1
 
 # Alarm (fixed for testing purpose)
-clk.alarm = "07:00"
+clk.alarm = ""
+big = ImageFont.truetype("wendy.ttf", 70)
 try:
     while True:
         now = datetime.datetime.now()
         resync = 0
-
         clk.clear()
-        clk.d_clock()
+        if clk.input_thread.has_input.is_set():
+            with clk.audio_thread.lock:
+                new_vol = clk.audio_thread.volume + clk.input_thread.wheel
+            if new_vol <= 100 and new_vol >= 0:
+                clk.mpd_thread.vol(new_vol)
+            if clk.oled.contrast != 10:
+                clk.oled.set_contrast(10)
+            new_vol = min(max(new_vol, 0), 100)
+            clk.oled.text_center_y(20 ,"%s %%" % (new_vol,), "#3333cc", font=big)
+            with clk.input_thread.lock:
+                clk.input_thread.wheel = 0
+            clk.input_thread.has_input.clear()
+        else:
+            clk.d_clock()
+            clk.d_mplayer()
         clk.d_signal()
         clk.d_cpu()
 
 
-        clk.d_mplayer()
         clk.d_temp()
         clk.d_audio()
         clk.d_alarm()
@@ -259,7 +289,8 @@ try:
         d = (datetime.datetime.now()-now).total_seconds()
         s = max(REFRESH_RATE - d + resync, 0)
         if s > 0:
-            time.sleep(s)
+            #time.sleep(s)
+            clk.input_thread.has_input.wait(s)
         if resync:
             log.info("process: %.4f sleep: %.4f total: %.4f resync: %.2fms" % (d, s, d+s, resync*1000))
         elif d > 0.5:
