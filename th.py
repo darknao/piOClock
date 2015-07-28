@@ -72,6 +72,9 @@ class MPlayerControl(Thread):
             step = (95 - 50) / 20
             volume = 50
             self.mpd.setvol(volume)
+            # load "clock" playlist and play song n4
+            self.mpd.clear()
+            self.mpd.load("clock")
             self.mpd.play(4)
             self.log.debug("play song 4, and raising volume...")
             while volume < (50 + step*20) and not self.must_stop.is_set():
@@ -97,8 +100,10 @@ class MPlayer(Thread):
         self.status = self.mpd.status()
         if self.status['state'] == "play":
             song = self.mpd.currentsong()
-            if 'title' in song:
+            if 'title' in song and 'name' in song:
                 self.title = "%s - %s" % (song['title'], song['name'], )
+            elif 'title' in song and 'artist' in song:
+                self.title = "%s - %s" % (song['title'], song['artist'], )
         self.mpc = None
 
     def run(self):
@@ -108,10 +113,13 @@ class MPlayer(Thread):
                 events = self.mpd.idle()
                 if 'player' in events:
                     status = self.mpd.status()
+
                     if status['state'] == "play":
                         song = self.mpd.currentsong()
-                        if 'title' in song:
+                        if 'title' in song and 'name' in song:
                             title = "%s - %s" % (song['title'], song['name'], )
+                        elif 'title' in song and 'artist' in song:
+                            title = "%s - %s" % (song['title'], song['artist'], )
                     else:
                         title = ""
                     self.log.debug("mpd event: %s state: %s song: %s" % (events, status['state'], title))

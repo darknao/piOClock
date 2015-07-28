@@ -49,6 +49,7 @@ class Clock(object):
             Image.open("radio_1.png"),
             Image.open("radio_2.png"),
             Image.open("radio_3.png")]
+        self.alarm_img = Image.open("alarm.png")
         # scrolling text settings
         self.scroll_txt = led.cols
         self.SCROLLING_SPEED = 8
@@ -136,32 +137,33 @@ class Clock(object):
         self.now = now
 
     def d_alarm(self):
-        # check alarm
-        if not self.alarm_running and self.now.strftime("%H:%M") == self.alarm:
-            # wake up!
-            self.log.info("Wake up !")
-            # start mpc
-            with self.mpd_thread.lock:
-                status = self.mpd_thread.status
-            if status['state'] != "play":
-                try:
-                    self.mpd_thread.rise()
+        if self.alarm != "":
+            self.oled.im.paste(self.alarm_img, (23 ,0))
+            # check alarm
+            if not self.alarm_running and self.now.strftime("%H:%M") == self.alarm:
+                # wake up!
+                self.log.info("Wake up !")
+                # start mpc
+                with self.mpd_thread.lock:
+                    status = self.mpd_thread.status
+                if status['state'] != "play":
+                    try:
+                        self.mpd_thread.rise()
+                        self.alarm_running = True
+                    except Exception, e:
+                        self.log.exception(e)
+                else:
+                    self.log.warning("radio already playing? ok...")
                     self.alarm_running = True
-                except Exception, e:
-                    self.log.exception(e)
-            else:
-                self.log.warning("radio already playing? ok...")
-                self.alarm_running = True
-        if self.alarm_running and self.now.hour > int(self.alarm.split(":")[0]) + 1:
-            self.log.info("time to shut up!")
-            self.mpd_thread.stop_playing()
-            self.alarm_running = False
+            if self.alarm_running and self.now.hour > int(self.alarm.split(":")[0]) + 1:
+                self.log.info("time to shut up!")
+                self.mpd_thread.stop_playing()
+                self.alarm_running = False
 
     def d_signal(self):
         """get signal power and display it on screen"""
-        self.hwm_thread.lock.acquire()
-        wifi = self.hwm_thread.wifi_signal
-        self.hwm_thread.lock.release()
+        with self.hwm_thread.lock:
+            wifi = self.hwm_thread.wifi_signal
         signal = int(wifi / 100.0 * 4)
         self.oled.im.paste(self.signal[signal], (0, 0))
 
@@ -222,7 +224,9 @@ class Clock(object):
 
     def d_void(self):
         pass
-# Wiringpy pin number, NOT RPI PIN! see here: http://wiringpi.com/pins/
+
+# Wiringpi pin number, NOT RPI PIN! see here: http://wiringpi.com/pins/
+# Maybe use RPi instead of wiringpi...
 RESET_PIN = 15
 DC_PIN = 16
 led = ssd1351.SSD1351(reset_pin=RESET_PIN, dc_pin=DC_PIN, rows=96)
@@ -244,7 +248,7 @@ time.sleep(1-datetime.datetime.now().microsecond/1000.0/1000.0)
 REFRESH_RATE = 1
 
 # Alarm (fixed for testing purpose)
-clk.alarm = ""
+clk.alarm = "07:00"
 big = ImageFont.truetype("wendy.ttf", 70)
 try:
     while True:
