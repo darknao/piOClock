@@ -214,13 +214,21 @@ class Clock(object):
         self.oled.draw_text(self.oled.cols - w +2, -4, tempC, "#666666", font=font)
 
     def d_audio(self):
+        with self.audio_thread.lock:
+            volume = self.audio_thread.volume
         # background
-        self.audio_thread.lock.acquire()
-        volume = self.audio_thread.volume
-        self.audio_thread.lock.release()
-        self.oled.draw.rectangle([(44, 3), (84, 3)], fill="#000000", outline="#333333")
+        self.oled.draw.rectangle([(44, 3), (84, 5)], fill="#000000", outline="#333333")
         volume_bar = volume / 100.0 * 40
-        self.oled.draw.line([(44, 3), (44+volume_bar, 3)], fill="#006600")
+        self.oled.draw.rectangle([(44, 3), (44+volume_bar, 5)], fill="#006600")
+
+    def d_volume(self, vol):
+        if vol <= 100 and vol >= 0:
+            self.mpd_thread.vol(vol)
+        if self.oled.contrast != 10:
+            self.oled.set_contrast(10)
+        new_vol = min(max(vol, 0), 100)
+        self.oled.text_center_y(15 ,"volume", "#006600", font=self.font_txt)        
+        self.oled.text_center_y(25 ,"%s %%" % (new_vol,), "#3333cc", font=big)
 
     def d_void(self):
         pass
@@ -258,12 +266,7 @@ try:
         if clk.input_thread.has_input.is_set():
             with clk.audio_thread.lock:
                 new_vol = clk.audio_thread.volume + clk.input_thread.wheel
-            if new_vol <= 100 and new_vol >= 0:
-                clk.mpd_thread.vol(new_vol)
-            if clk.oled.contrast != 10:
-                clk.oled.set_contrast(10)
-            new_vol = min(max(new_vol, 0), 100)
-            clk.oled.text_center_y(20 ,"%s %%" % (new_vol,), "#3333cc", font=big)
+            clk.d_volume(new_vol)
             with clk.input_thread.lock:
                 clk.input_thread.wheel = 0
             clk.input_thread.has_input.clear()
