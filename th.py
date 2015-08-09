@@ -62,10 +62,30 @@ class MPlayerControl(Thread):
         self.log.debug("%s thread started" % self.name)
         if self.action is "play":
             self.log.debug("play song 4")
-            self.mpd.play(4)
+            self.mpd.play(7)
         if self.action is "stop":
             self.log.debug("stop playing")
             self.mpd.stop()
+        if self.action is "next":
+            self.log.debug("next track")
+            self.mpd.next()
+        if self.action is "prev":
+            self.log.debug("previous track")
+            self.mpd.previous()
+
+        if self.action is "sleep":
+            # get current volume
+            volume = int(self.mpd.status()['volume'])
+            if volume > 50:
+                step = (volume - 50) / 120.0
+            self.log.debug("sleeping mode for 120min (using step: %.2f)" % step)
+            while volume > 50 and not self.must_stop.is_set():
+                self.must_stop.wait(60)
+                volume -= step
+                self.mpd.setvol(int(volume))
+            self.mpd.stop()
+            self.log.debug("sleeping complete")
+
         if self.action is "rise":
             # minimum audible volume is ~ 50, max is 95
             # raise volume every minute for 20 minutes
@@ -113,15 +133,13 @@ class MPlayer(Thread):
                 events = self.mpd.idle()
                 if 'player' in events:
                     status = self.mpd.status()
-
+                    title = ""
                     if status['state'] == "play":
                         song = self.mpd.currentsong()
                         if 'title' in song and 'name' in song:
                             title = "%s - %s" % (song['title'], song['name'], )
                         elif 'title' in song and 'artist' in song:
                             title = "%s - %s" % (song['title'], song['artist'], )
-                    else:
-                        title = ""
                     self.log.debug("mpd event: %s state: %s song: %s" % (events, status['state'], title))
                     self.lock.acquire()
                     self.title = title
@@ -145,10 +163,28 @@ class MPlayer(Thread):
         self.mpc = MPlayerControl("play")
         self.mpc.start()
 
+    def next(self):
+        if self.mpc and self.mpc.is_alive():
+            self.mpc.must_stop.set()
+        self.mpc = MPlayerControl("next")
+        self.mpc.start()
+
+    def prev(self):
+        if self.mpc and self.mpc.is_alive():
+            self.mpc.must_stop.set()
+        self.mpc = MPlayerControl("prev")
+        self.mpc.start()
+
     def rise(self):
         if self.mpc and self.mpc.is_alive():
             self.mpc.must_stop.set()
         self.mpc = MPlayerControl("rise")
+        self.mpc.start()
+
+    def sleep(self):
+        if self.mpc and self.mpc.is_alive():
+            self.mpc.must_stop.set()
+        self.mpc = MPlayerControl("sleep")
         self.mpc.start()
 
     def vol(self, volume):
@@ -234,18 +270,25 @@ class Audio(Thread):
 
             polling.unregister(fd)
 
+
 class Input(Thread):
     def __init__(self):
         super(Input, self).__init__()
         self.wheel = 0
+        self.click = False
         self.has_input = threading.Event()
+        # Rotary Encoder
         gpio.setup(17, gpio.IN, gpio.PUD_UP)
         gpio.setup(27, gpio.IN, gpio.PUD_UP)
-
+        # Button
+        gpio.setup(18, gpio.IN, gpio.PUD_UP)
 
     def run(self):
         self.log.debug("%s thread started" % self.name)
-        gpio.add_event_detect(17, gpio.FALLING, callback=self.on_low, bouncetime=100)
+        gpio.add_event_detect(17, gpio.FALLING,
+                              callback=self.on_low, bouncetime=100)
+        gpio.add_event_detect(18, gpio.FALLING,
+                              callback=self.on_click, bouncetime=500)
 
     def on_low(self, pin):
         a = gpio.input(17)
@@ -263,3 +306,20 @@ class Input(Thread):
             self.has_input.set()
             self.log.debug("rotate %s %s" % (vol, self.wheel))
 
+    def on_click(self, pin):
+        with self.lock:
+            self.click = True
+        self.has_input.set()
+        self.log.debug("click!")
+
+
+if __name__ == '__main__':
+    log = logging.getLogger("main")
+    logging.basicConfig(
+        format='%(asctime)-23s - %(levelname)-7s - %(name)s - %(message)s')
+    log.setLevel(logging.DEBUG)
+
+    input_thread = Input()
+    input_thread.start()
+    while True:
+        time.sleep(10)

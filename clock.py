@@ -18,7 +18,8 @@ logging.basicConfig(
     format='%(asctime)-23s - %(levelname)-7s - %(name)s - %(message)s')
 log.setLevel(logging.INFO)
 locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
-
+path, filename = os.path.split(os.path.abspath(__file__))
+op = os.path
 
 class Clock(object):
     """docstring for Clock"""
@@ -30,8 +31,9 @@ class Clock(object):
         self.log.setLevel(logging.DEBUG)
         # OLED display
         self.oled = oled
-        self.font_clk = ImageFont.truetype("lcd.ttf", 58)
-        self.font_txt = ImageFont.truetype("vermin_vibes_1989.ttf", 20)
+        self.font_clk = ImageFont.truetype(op.join(path, "lcd.ttf"), 58)
+        self.font_txt = ImageFont.truetype(op.join(path, "vermin_vibes_1989.ttf"), 20)
+        self.font_big = ImageFont.truetype(op.join(path, "wendy.ttf"), 70)
         # self.tick = True
         self.oled.reset()
         self.oled.begin()
@@ -45,13 +47,13 @@ class Clock(object):
         self.display = self.oled.display
         # wifi signal ressourses
         self.signal = [
-            Image.open("radio_0.png"),
-            Image.open("radio_1.png"),
-            Image.open("radio_2.png"),
-            Image.open("radio_3.png")]
-        self.alarm_img = Image.open("alarm.png")
+            Image.open(op.join(path, "radio_0.png")),
+            Image.open(op.join(path, "radio_1.png")),
+            Image.open(op.join(path, "radio_2.png")),
+            Image.open(op.join(path, "radio_3.png"))]
+        self.alarm_img = Image.open(op.join(path, "alarm.png"))
         # scrolling text settings
-        self.scroll_txt = led.cols
+        self.scroll_txt = oled.cols
         self.SCROLLING_SPEED = 8
         # current time
         self.now = datetime.datetime.now()
@@ -109,6 +111,24 @@ class Clock(object):
         self.display()
         title_y += size + 2
 
+        # Menu
+        self.in_menu = False
+        self.freeze = 0
+        self.menu = {
+            "player": {
+                "play": self.mpd_thread.play,
+                "stop": self.mpd_thread.stop_playing,
+                "next": self.mpd_thread.next,
+                "previous": self.mpd_thread.prev,
+                "sleep": self.mpd_thread.sleep,
+            },
+            "stats": self.d_stats,
+            "enable alarm (7h00)": self.alarm_on,
+            "disable alarm": self.alarm_off,
+        }
+        self.menu_sub = None
+        self.menu_cursor = 0
+
 
     def stop_all(self):
         self.log.debug("stopping all thread...")
@@ -125,7 +145,7 @@ class Clock(object):
 
     def d_clock(self):
         now = datetime.datetime.now()
-        font = ImageFont.truetype("wendy.ttf", 14)
+        font = ImageFont.truetype(op.join(path, "wendy.ttf"), 14)
         self.oled.text_center(now.strftime("%H:%M"), "#3333cc", font=self.font_clk)
         date = now.strftime("%a %d %b")
         w, h = self.oled.draw.textsize(date, font=font)
@@ -209,7 +229,7 @@ class Clock(object):
         self.temp_node.lock.acquire()
         tempC = "%.1f'C" % self.temp_node.temp
         self.temp_node.lock.release()
-        font = ImageFont.truetype("wendy.ttf", 20)
+        font = ImageFont.truetype(op.join(path, "wendy.ttf"), 20)
         w, h = self.oled.draw.textsize(tempC, font=font)
         self.oled.draw_text(self.oled.cols - w +2, -4, tempC, "#666666", font=font)
 
@@ -227,90 +247,145 @@ class Clock(object):
         if self.oled.contrast != 10:
             self.oled.set_contrast(10)
         new_vol = min(max(vol, 0), 100)
-        self.oled.text_center_y(15 ,"volume", "#006600", font=self.font_txt)        
-        self.oled.text_center_y(25 ,"%s %%" % (new_vol,), "#3333cc", font=big)
+        self.oled.text_center_y(15, "volume", "#006600", font=self.font_txt)
+        self.oled.text_center_y(25, "%s %%" % (new_vol,), "#3333cc", font=self.font_big)
+
+    def d_menu(self, click=False, pos=0):
+        if self.oled.contrast != 10:
+            self.oled.set_contrast(10)
+        if click:
+            self.freeze = 2
+        if not self.in_menu:
+            # reinit cursor
+            self.menu_cursor = 0
+            self.menu_sub = None
+        if not self.menu_sub:
+            menu = self.menu
+        else:
+            menu = self.menu[self.menu_sub]
+        if self.in_menu and click:
+            selected_item = menu[menu.keys()[self.menu_cursor]]
+            if type(selected_item) == dict:
+                # is menu
+                self.menu_sub = menu.keys()[self.menu_cursor]
+                menu = selected_item
+                self.menu_cursor = 0
+            else:
+                if selected_item():
+                    return
+        self.oled.text_center_y(0, "M E N U", "#D93BD6", font=self.font_txt)
+        self.menu_cursor = (self.menu_cursor + pos) % len(menu)
+
+        for i, item in enumerate(menu.keys()):
+            if i == self.menu_cursor:
+                self.oled.draw_text(0, 15+i*10, ">", "white")
+            self.oled.draw_text(10, 15+i*10, item, "#3333cc")
+        self.in_menu = True
+
+    def d_stats(self):
+        self.oled.clear()
+        self.oled.text_center_y(0, "stats", "#D93BD6", font=self.font_txt)
+        return True
+
+    def alarm_on(self):
+        self.alarm = "07:00"
+        self.freeze = 0
+
+    def alarm_off(self):
+        self.alarm = ""
+        self.freeze = 0
 
     def d_void(self):
         pass
 
-# Wiringpi pin number, NOT RPI PIN! see here: http://wiringpi.com/pins/
-# Maybe use RPi instead of wiringpi...
-RESET_PIN = 15
-DC_PIN = 16
-led = ssd1351.SSD1351(reset_pin=RESET_PIN, dc_pin=DC_PIN, rows=96)
-clk = Clock(led)
 
-# For buttons, or encoders, check for interrupts (https://pythonhosted.org/RPIO/rpio_py.html)
-now = datetime.datetime.now()
+if __name__ == '__main__':
+    # Wiringpi pin number, NOT RPI PIN! see here: http://wiringpi.com/pins/
+    # Maybe use RPi instead of wiringpi...
+    RESET_PIN = 15
+    DC_PIN = 16
+    led = ssd1351.SSD1351(reset_pin=RESET_PIN, dc_pin=DC_PIN, rows=96)
+    clk = Clock(led)
 
-led.clear()
-font = ImageFont.truetype("lcd.ttf", 58)
+    # For buttons, or encoders, check for interrupts (https://pythonhosted.org/RPIO/rpio_py.html)
+    now = datetime.datetime.now()
 
-led.log.setLevel(logging.WARNING)
+    led.clear()
+    font = ImageFont.truetype("lcd.ttf", 58)
 
-hours = now.hour
-minutes = now.minute
+    led.log.setLevel(logging.WARNING)
 
-# time sync
-time.sleep(1-datetime.datetime.now().microsecond/1000.0/1000.0)
-REFRESH_RATE = 1
+    hours = now.hour
+    minutes = now.minute
 
-# Alarm (fixed for testing purpose)
-clk.alarm = "07:00"
-big = ImageFont.truetype("wendy.ttf", 70)
-try:
-    while True:
-        now = datetime.datetime.now()
-        resync = 0
+    # time sync
+    time.sleep(1-datetime.datetime.now().microsecond/1000.0/1000.0)
+    REFRESH_RATE = 1
+
+    # Alarm (fixed for testing purpose)
+    clk.alarm = "" # 07:00"
+    big = ImageFont.truetype("wendy.ttf", 70)
+    try:
+        while True:
+            now = datetime.datetime.now()
+            resync = 0
+            clk.clear()
+            if clk.input_thread.has_input.is_set():
+                with clk.audio_thread.lock:
+                    wheel = clk.input_thread.wheel
+                    click = clk.input_thread.click
+                if wheel != 0 and not clk.in_menu:
+                    new_vol = clk.audio_thread.volume + clk.input_thread.wheel
+                    clk.d_volume(new_vol)
+                elif click or wheel != 0:
+                    clk.d_menu(click, wheel)
+                with clk.input_thread.lock:
+                    clk.input_thread.wheel = 0
+                    clk.input_thread.click = False
+                clk.input_thread.has_input.clear()
+            elif clk.freeze > 0:
+                clk.freeze -= 1
+                clk.d_menu()
+            else:
+                clk.in_menu = False
+                clk.d_clock()
+                clk.d_mplayer()
+            if not clk.in_menu:
+                clk.d_signal()
+                clk.d_temp()
+                clk.d_audio()
+                clk.d_alarm()
+            clk.d_cpu()
+
+            clk.display()
+
+            if minutes != now.minute:
+                # refresh minutes
+                minutes = now.minute
+                if (now.microsecond > 100000):
+                    resync = 0 - (now.microsecond/1000.0/1000.0)
+
+            # end here
+            d = (datetime.datetime.now()-now).total_seconds()
+            s = max(REFRESH_RATE - d + resync, 0)
+            if s > 0:
+                # time.sleep(s)
+                clk.input_thread.has_input.wait(s)
+            if resync:
+                log.info("process: %.4f sleep: %.4f total: %.4f resync: %.2fms"
+                         % (d, s, d+s, resync*1000))
+            elif d > 0.5:
+                log.info("process: %.4f sleep: %.4f total: %.4f overhead!"
+                         % (d, s, d+s))
+    except KeyboardInterrupt, e:
         clk.clear()
-        if clk.input_thread.has_input.is_set():
-            with clk.audio_thread.lock:
-                new_vol = clk.audio_thread.volume + clk.input_thread.wheel
-            clk.d_volume(new_vol)
-            with clk.input_thread.lock:
-                clk.input_thread.wheel = 0
-            clk.input_thread.has_input.clear()
-        else:
-            clk.d_clock()
-            clk.d_mplayer()
-        clk.d_signal()
-        clk.d_cpu()
-
-
-        clk.d_temp()
-        clk.d_audio()
-        clk.d_alarm()
-        # clk.oled.draw.line([(0, 16), (128, 16)], fill="#000066")
-
+        clk.oled.text_center("Exiting...", "blue", size=30)
         clk.display()
-
-        if minutes != now.minute:
-            # refresh minutes
-            minutes = now.minute
-            if (now.microsecond > 100000):
-                resync = 0 - (now.microsecond/1000.0/1000.0)
-
-        #os.system('clear')
-        #led.dump_disp2()
-        # end here
-        d = (datetime.datetime.now()-now).total_seconds()
-        s = max(REFRESH_RATE - d + resync, 0)
-        if s > 0:
-            #time.sleep(s)
-            clk.input_thread.has_input.wait(s)
-        if resync:
-            log.info("process: %.4f sleep: %.4f total: %.4f resync: %.2fms" % (d, s, d+s, resync*1000))
-        elif d > 0.5:
-            log.info("process: %.4f sleep: %.4f total: %.4f overhead!" % (d, s, d+s))
-except KeyboardInterrupt, e:
-    clk.clear()
-    clk.oled.text_center("Exiting...", "blue", size=30)
-    clk.display()
-    clk.stop_all()
-    clk.oled.fillScreen(0)
-except:
-    clk.stop_all()
-    clk.clear()
-    clk.oled.text_center("ERROR!", "red", size=36)
-    clk.display()
-    raise
+        clk.stop_all()
+        clk.oled.fillScreen(0)
+    except:
+        clk.stop_all()
+        clk.clear()
+        clk.oled.text_center("ERROR!", "red", size=36)
+        clk.display()
+        raise
