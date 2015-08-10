@@ -282,6 +282,7 @@ class Input(Thread):
         gpio.setup(27, gpio.IN, gpio.PUD_UP)
         # Button
         gpio.setup(18, gpio.IN, gpio.PUD_UP)
+        self.log.setLevel(logging.INFO)
 
     def run(self):
         self.log.debug("%s thread started" % self.name)

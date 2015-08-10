@@ -12,6 +12,7 @@ import os
 import locale
 import th
 import threading
+import menu
 
 log = logging.getLogger("main")
 logging.basicConfig(
@@ -114,18 +115,19 @@ class Clock(object):
         # Menu
         self.in_menu = False
         self.freeze = 0
-        self.menu = {
-            "player": {
-                "play": self.mpd_thread.play,
-                "stop": self.mpd_thread.stop_playing,
-                "next": self.mpd_thread.next,
-                "previous": self.mpd_thread.prev,
-                "sleep": self.mpd_thread.sleep,
-            },
-            "stats": self.d_stats,
-            "enable alarm (7h00)": self.alarm_on,
-            "disable alarm": self.alarm_off,
-        }
+        self.menu = [
+            menu.SubMenu("player",
+                            [
+                                menu.Item("play", self.mpd_thread.play),
+                                menu.Item("stop", self.mpd_thread.stop_playing),
+                                menu.Item("next", self.mpd_thread.next),
+                                menu.Item("previous", self.mpd_thread.prev),
+                                menu.Item("sleep", self.mpd_thread.sleep)
+                            ]),
+            menu.Item("stats", self.d_stats),
+            menu.Item("alarm 7h00", self.alarm_on),
+            menu.Item("alarm off", self.alarm_off)
+        ]
         self.menu_sub = None
         self.menu_cursor = 0
 
@@ -259,27 +261,31 @@ class Clock(object):
             # reinit cursor
             self.menu_cursor = 0
             self.menu_sub = None
-        if not self.menu_sub:
-            menu = self.menu
+        if self.menu_sub == None:
+            cur_menu = self.menu
         else:
-            menu = self.menu[self.menu_sub]
+            cur_menu = self.menu[self.menu_sub].items
         if self.in_menu and click:
-            selected_item = menu[menu.keys()[self.menu_cursor]]
-            if type(selected_item) == dict:
+            selected_item = cur_menu[self.menu_cursor]
+            if isinstance(selected_item, menu.SubMenu):
                 # is menu
-                self.menu_sub = menu.keys()[self.menu_cursor]
-                menu = selected_item
+                self.menu_sub = self.menu_cursor
+                cur_menu = selected_item.items
                 self.menu_cursor = 0
             else:
-                if selected_item():
+                if selected_item.function():
                     return
         self.oled.text_center_y(0, "M E N U", "#D93BD6", font=self.font_txt)
-        self.menu_cursor = (self.menu_cursor + pos) % len(menu)
+        self.menu_cursor = (self.menu_cursor + pos) % len(cur_menu)
 
-        for i, item in enumerate(menu.keys()):
+        font = ImageFont.truetype("/usr/share/fonts/truetype/droid/DroidSansMono.ttf", 14)
+
+        for i, item in enumerate(cur_menu):
             if i == self.menu_cursor:
-                self.oled.draw_text(0, 15+i*10, ">", "white")
-            self.oled.draw_text(10, 15+i*10, item, "#3333cc")
+                self.oled.draw_text(0, 15+i*14, ">", "white", font=font)
+                self.oled.draw_text(10, 15+i*14, item.name.upper(), "#009900", font=font)
+            else:
+                self.oled.draw_text(10, 15+i*14, item.name.upper(), "#222299", font=font)
         self.in_menu = True
 
     def d_stats(self):

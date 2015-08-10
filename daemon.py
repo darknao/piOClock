@@ -114,7 +114,7 @@ class Daemon:
                                 
                 except OSError, err:
                         err = str(err)
-                        if err.find("[Errno 3]") > 0: # No such process
+                        if err.find("Errno 3") > 0: # No such process
                                 if os.path.exists(self.pidfile):
                                         os.remove(self.pidfile)
                         else:
