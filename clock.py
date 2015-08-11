@@ -122,11 +122,11 @@ class Clock(object):
                                 menu.Item("stop", self.mpd_thread.stop_playing),
                                 menu.Item("next", self.mpd_thread.next),
                                 menu.Item("previous", self.mpd_thread.prev),
-                                menu.Item("sleep", self.mpd_thread.sleep)
+                                menu.Item("sleep", self.mpd_thread.sleep, goback=True)
                             ]),
             menu.Item("stats", self.d_stats),
-            menu.Item("alarm 7h00", self.alarm_on),
-            menu.Item("alarm off", self.alarm_off)
+            menu.Item("alarm 7h00", self.alarm_on, goback=True),
+            menu.Item("alarm off", self.alarm_off, goback=True)
         ]
         self.menu_sub = None
         self.menu_cursor = 0
@@ -256,7 +256,7 @@ class Clock(object):
         if self.oled.contrast != 10:
             self.oled.set_contrast(10)
         if click:
-            self.freeze = 2
+            self.freeze = 4
         if not self.in_menu:
             # reinit cursor
             self.menu_cursor = 0
@@ -275,6 +275,12 @@ class Clock(object):
             else:
                 if selected_item.function():
                     return
+                if selected_item.goback:
+                    self.clear()
+                    self.oled.text_center_y(35, selected_item.name, "#000099", font=self.font_txt)
+                    self.in_menu = False
+                    self.freeze = 0
+                    return
         self.oled.text_center_y(0, "M E N U", "#D93BD6", font=self.font_txt)
         self.menu_cursor = (self.menu_cursor + pos) % len(cur_menu)
 
@@ -291,6 +297,11 @@ class Clock(object):
     def d_stats(self):
         self.oled.clear()
         self.oled.text_center_y(0, "stats", "#D93BD6", font=self.font_txt)
+        ip = self.hwm_thread.get_ip_address('wlan0')
+        essid = self.hwm_thread.wifi.getEssid()
+        self.oled.draw_text(0, 15, "ip: %s" % ip, "#ffffff")
+        self.oled.draw_text(0, 25, "essid: %s" % essid, "#ffffff")
+        
         return True
 
     def alarm_on(self):
@@ -349,9 +360,9 @@ if __name__ == '__main__':
                     clk.input_thread.wheel = 0
                     clk.input_thread.click = False
                 clk.input_thread.has_input.clear()
-            elif clk.freeze > 0:
-                clk.freeze -= 1
-                clk.d_menu()
+            # elif clk.freeze > 0:
+            #     clk.freeze -= 1
+            #     clk.d_menu()
             else:
                 clk.in_menu = False
                 clk.d_clock()
@@ -376,7 +387,7 @@ if __name__ == '__main__':
             s = max(REFRESH_RATE - d + resync, 0)
             if s > 0:
                 # time.sleep(s)
-                clk.input_thread.has_input.wait(s)
+                clk.input_thread.has_input.wait(s + 60*self.freeze)
             if resync:
                 log.info("process: %.4f sleep: %.4f total: %.4f resync: %.2fms"
                          % (d, s, d+s, resync*1000))

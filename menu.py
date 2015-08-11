@@ -4,9 +4,10 @@
 
 class Item():
     """docstring for Item"""
-    def __init__(self, name, function=None):
+    def __init__(self, name, function=None, goback=False):
         self.name = name
         self.function = function
+        self.goback = goback
 
 class SubMenu():
     """docstring for SubMenu"""

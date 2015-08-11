@@ -70,11 +70,12 @@ class piOClock(daemon.Daemon):
                         clk.input_thread.wheel = 0
                         clk.input_thread.click = False
                     clk.input_thread.has_input.clear()
-                elif clk.freeze > 0:
-                    clk.freeze -= 1
-                    clk.d_menu()
+                # elif clk.freeze > 0:
+                #    clk.freeze -= 1
+                #    clk.d_menu()
                 else:
                     clk.in_menu = False
+                    clk.freeze = 0
                     clk.d_clock()
                     clk.d_mplayer()
                 if not clk.in_menu:
@@ -97,7 +98,7 @@ class piOClock(daemon.Daemon):
                 s = max(REFRESH_RATE - d + resync, 0)
                 if s > 0:
                     # time.sleep(s)
-                    clk.input_thread.has_input.wait(s)
+                    clk.input_thread.has_input.wait(s + 1*clk.freeze)
                 if resync:
                     self.log.info("process: %.4f sleep: %.4f total: %.4f resync: %.2fms"
                              % (d, s, d+s, resync*1000))

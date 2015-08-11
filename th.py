@@ -12,6 +12,9 @@ import alsaaudio
 from pythonwifi.iwlibs import Wireless
 import select
 import RPi.GPIO as gpio
+import socket
+import struct
+import fcntl
 
 gpio.setmode(gpio.BCM)
 
@@ -48,6 +51,14 @@ class HWmonitor(Thread):
             self.wifi_signal = qual.signallevel
             self.lock.release()
             self.must_stop.wait(5)
+
+    def get_ip_address(self, ifname):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        return socket.inet_ntoa(fcntl.ioctl(
+            s.fileno(),
+            0x8915,  # SIOCGIFADDR
+            struct.pack('256s', ifname[:15])
+        )[20:24])
 
 
 class MPlayerControl(Thread):
@@ -95,7 +106,7 @@ class MPlayerControl(Thread):
             # load "clock" playlist and play song n4
             self.mpd.clear()
             self.mpd.load("clock")
-            self.mpd.play(4)
+            self.mpd.play(8)
             self.log.debug("play song 4, and raising volume...")
             while volume < (50 + step*20) and not self.must_stop.is_set():
                 self.must_stop.wait(60)
