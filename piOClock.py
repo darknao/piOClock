@@ -9,14 +9,17 @@ import locale
 import ssd1351
 import datetime
 import time
+import signal
 from clock import Clock
+from textwrap import wrap
+
 
 class piOClock(daemon.Daemon):
     def __init__(self):
         path, filename = os.path.split(os.path.abspath(__file__))
 
-        pidfile = os.path.join(path, "piOClock.pid" )
-        self.logfile = os.path.join(path, "piOClock.log" )
+        pidfile = os.path.join("/var/run", "piOClock.pid")
+        self.logfile = os.path.join("/var/log", "piOClock.log")
 
         logging.basicConfig(
             format='%(asctime)-23s - %(levelname)-7s - %(name)s - %(message)s',
@@ -25,18 +28,29 @@ class piOClock(daemon.Daemon):
         self.log.setLevel(logging.INFO)
         locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
 
-        daemon.Daemon.__init__(self, pidfile, stderr = self.logfile, stdout = self.logfile)
+        daemon.Daemon.__init__(self, pidfile,
+                               stderr=self.logfile, stdout=self.logfile)
+
+    def shutdown(self, signum=0, frame=None):
+        self.log.info("Shutdown clock...")
+        self.clk.clear()
+        self.clk.oled.text_center("Exiting...", "blue", size=30)
+        self.clk.display()
+        self.clk.stop_all()
+        self.clk.oled.fillScreen(0)
+        os._exit(0)
 
     def run(self):
-        # main loop
         # Wiringpi pin number, NOT RPI PIN! see here: http://wiringpi.com/pins/
         # Maybe use RPi instead of wiringpi...
         RESET_PIN = 15
         DC_PIN = 16
         led = ssd1351.SSD1351(reset_pin=RESET_PIN, dc_pin=DC_PIN, rows=96)
-        clk = Clock(led)
+        self.clk = Clock(led)
 
-        # For buttons, or encoders, check for interrupts (https://pythonhosted.org/RPIO/rpio_py.html)
+        # handle sigterm
+        signal.signal(signal.SIGTERM, self.shutdown)
+
         now = datetime.datetime.now()
 
         led.clear()
@@ -51,41 +65,42 @@ class piOClock(daemon.Daemon):
         REFRESH_RATE = 1
 
         # Alarm (fixed for testing purpose)
-        clk.alarm = "" # 07:00"
+        self.clk.alarm = ""  # 07:00"
         try:
             while True:
                 now = datetime.datetime.now()
                 resync = 0
-                clk.clear()
-                if clk.input_thread.has_input.is_set():
-                    with clk.audio_thread.lock:
-                        wheel = clk.input_thread.wheel
-                        click = clk.input_thread.click
-                    if wheel != 0 and not clk.in_menu:
-                        new_vol = clk.audio_thread.volume + clk.input_thread.wheel
-                        clk.d_volume(new_vol)
+                self.clk.clear()
+                if self.clk.input_thread.has_input.is_set():
+                    with self.clk.audio_thread.lock:
+                        wheel = self.clk.input_thread.wheel
+                        click = self.clk.input_thread.click
+                    self.clk.input_thread.has_input.clear()
+                    if wheel != 0 and not self.clk.in_menu:
+                        new_vol = self.clk.audio_thread.volume + self.clk.input_thread.wheel
+                        self.clk.d_volume(new_vol)
                     elif click or wheel != 0:
-                        clk.d_menu(click, wheel)
-                    with clk.input_thread.lock:
-                        clk.input_thread.wheel = 0
-                        clk.input_thread.click = False
-                    clk.input_thread.has_input.clear()
+                        self.clk.d_menu(click, wheel)
+                    with self.clk.input_thread.lock:
+                        self.clk.input_thread.wheel = 0
+                        self.clk.input_thread.click = False
                 # elif clk.freeze > 0:
                 #    clk.freeze -= 1
                 #    clk.d_menu()
                 else:
-                    clk.in_menu = False
-                    clk.freeze = 0
-                    clk.d_clock()
-                    clk.d_mplayer()
-                if not clk.in_menu:
-                    clk.d_signal()
-                    clk.d_temp()
-                    clk.d_audio()
-                    clk.d_alarm()
-                clk.d_cpu()
+                    self.clk.in_menu = False
+                    self.clk.in_volume = False
+                    self.clk.freeze = 0
+                self.clk.d_clock()
+                if not self.clk.in_menu:
+                    self.clk.d_mplayer()
+                    self.clk.d_signal()
+                    self.clk.d_temp()
+                    self.clk.d_audio()
+                    self.clk.d_alarm()
+                self.clk.d_cpu()
 
-                clk.display()
+                self.clk.display()
 
                 if minutes != now.minute:
                     # refresh minutes
@@ -98,24 +113,26 @@ class piOClock(daemon.Daemon):
                 s = max(REFRESH_RATE - d + resync, 0)
                 if s > 0:
                     # time.sleep(s)
-                    clk.input_thread.has_input.wait(s + 1*clk.freeze)
+                    self.clk.input_thread.has_input.wait(s + 1*self.clk.freeze)
                 if resync:
                     self.log.info("process: %.4f sleep: %.4f total: %.4f resync: %.2fms"
-                             % (d, s, d+s, resync*1000))
+                                  % (d, s, d+s, resync*1000))
                 elif d > 0.5:
                     self.log.info("process: %.4f sleep: %.4f total: %.4f overhead!"
-                             % (d, s, d+s))
+                                  % (d, s, d+s))
         except KeyboardInterrupt, e:
-            clk.clear()
-            clk.oled.text_center("Exiting...", "blue", size=30)
-            clk.display()
-            clk.stop_all()
-            clk.oled.fillScreen(0)
-        except:
-            clk.stop_all()
-            clk.clear()
-            clk.oled.text_center("ERROR!", "red", size=36)
-            clk.display()
+            self.shutdown()
+        except Exception, e:
+            self.clk.stop_all()
+            self.clk.clear()
+            self.clk.oled.text_center_y(0, "ERROR!", "red", size=36)
+            error_lines = wrap("%s" % e, width=self.clk.oled.cols/7)
+            y = 40
+            for err_line in error_lines:
+                self.clk.oled.draw_text(0, y, err_line, "white", size=12)
+                y += 12
+            self.log.error(e)
+            self.clk.display()
             raise
 
 if __name__ == "__main__":

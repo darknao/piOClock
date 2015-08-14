@@ -14,6 +14,7 @@ import th
 import threading
 import menu
 
+__VERSION__ = "0.5"
 log = logging.getLogger("main")
 logging.basicConfig(
     format='%(asctime)-23s - %(levelname)-7s - %(name)s - %(message)s')
@@ -21,6 +22,7 @@ log.setLevel(logging.INFO)
 locale.setlocale(locale.LC_ALL, 'fr_FR.UTF-8')
 path, filename = os.path.split(os.path.abspath(__file__))
 op = os.path
+
 
 class Clock(object):
     """docstring for Clock"""
@@ -40,7 +42,8 @@ class Clock(object):
         self.oled.begin()
         size = (96 / 6) - 2
         title_y = 0
-        self.oled.text_center_y(title_y, "init...", "red", size=size)
+        self.oled.text_center_y(title_y, "pi O'Clock v.%s" % (__VERSION__,),
+                                "red", size=size)
         title_y += size + 2
         self.oled.display()
         self.oled.set_contrast(10)
@@ -59,78 +62,83 @@ class Clock(object):
         # current time
         self.now = datetime.datetime.now()
 
+        a_right = oled.cols-16
         # MPlayer daemon
-        w, h = self.oled.draw_text(0, title_y, "MPD :", "white", size=size)
+        w, h = self.oled.draw_text(0, title_y, "MPD", "white", size=size)
         self.display()
         try:
             self.mpd_thread = th.MPlayer()
             self.mpd_thread.start()
-            self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
+            self.oled.draw_text(a_right, title_y, "OK", "green", size=size)
         except Exception, e:
-            self.oled.draw_text(w+2, title_y, "KO", "red", size=size)
+            self.oled.draw_text(a_right, title_y, "KO", "red", size=size)
             self.d_mplayer = self.d_void
         self.display()
         title_y += size + 2
 
         # Temp sensor
-        w, h = self.oled.draw_text(0, title_y, "Temp :", "white", size=size)
+        w, h = self.oled.draw_text(0, title_y, "Temp", "white", size=size)
         self.display()
         try:
             self.temp_node = th.TempNode()
             self.temp_node.start()
-            self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
+            self.oled.draw_text(a_right, title_y, "OK", "green", size=size)
         except Exception, e:
-            self.oled.draw_text(w+2, title_y, "KO", "red", size=size)
+            self.oled.draw_text(a_right, title_y, "KO", "red", size=size)
             self.d_temp = self.d_void
         self.display()
         title_y += size + 2
 
         # HWmonitor
-        w, h = self.oled.draw_text(0, title_y, "HWmon :", "white", size=size)
+        w, h = self.oled.draw_text(0, title_y, "HWmon", "white", size=size)
         self.display()
         self.hwm_thread = th.HWmonitor()
         self.hwm_thread.start()
-        self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
+        self.oled.draw_text(a_right, title_y, "OK", "green", size=size)
         self.display()
         title_y += size + 2
 
         # Audio Control
-        w, h = self.oled.draw_text(0, title_y, "Audio :", "white", size=size)
+        w, h = self.oled.draw_text(0, title_y, "Audio", "white", size=size)
         self.display()
         self.audio_thread = th.Audio()
         self.audio_thread.start()
-        self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
+        self.oled.draw_text(a_right, title_y, "OK", "green", size=size)
         self.display()
         title_y += size + 2
 
         # Input Thread
-        w, h = self.oled.draw_text(0, title_y, "Input :", "white", size=size)
+        w, h = self.oled.draw_text(0, title_y, "Input", "white", size=size)
         self.display()
         self.input_thread = th.Input()
         self.input_thread.start()
-        self.oled.draw_text(w+2, title_y, "OK", "green", size=size)
+        self.oled.draw_text(a_right, title_y, "OK", "green", size=size)
         self.display()
         title_y += size + 2
 
         # Menu
         self.in_menu = False
+        self.in_volume = False
         self.freeze = 0
         self.menu = [
             menu.SubMenu("player",
-                            [
-                                menu.Item("play", self.mpd_thread.play),
-                                menu.Item("stop", self.mpd_thread.stop_playing),
-                                menu.Item("next", self.mpd_thread.next),
-                                menu.Item("previous", self.mpd_thread.prev),
-                                menu.Item("sleep", self.mpd_thread.sleep, goback=True)
-                            ]),
-            menu.Item("stats", self.d_stats),
-            menu.Item("alarm 7h00", self.alarm_on, goback=True),
-            menu.Item("alarm off", self.alarm_off, goback=True)
+                         [
+                             menu.Action("play", self.mpd_thread.play),
+                             menu.Action("stop", self.mpd_thread.stop_playing),
+                             menu.Action("next", self.mpd_thread.next),
+                             menu.Action("previous", self.mpd_thread.prev),
+                             menu.Action("sleep", self.mpd_thread.sleep, goback=True),
+                             menu.SubMenu("playlist", self.menu_playlist()),
+                         ]),
+            menu.Screen("info", self.d_info),
+            menu.Action("alarm 7h00", self.alarm_on, goback=True),
+            menu.Action("alarm off", self.alarm_off, goback=True),
+            menu.Command("shutdown", "poweroff", goback=True),
+            menu.MenuBack("Exit")
         ]
-        self.menu_sub = None
+        self.menu_sub = []
         self.menu_cursor = 0
-
+        self.menu_max_items = 5
 
     def stop_all(self):
         self.log.debug("stopping all thread...")
@@ -146,6 +154,8 @@ class Clock(object):
         self.log.debug("stopping all thread complete!")
 
     def d_clock(self):
+        if self.in_menu or self.in_volume:
+            return
         now = datetime.datetime.now()
         font = ImageFont.truetype(op.join(path, "wendy.ttf"), 14)
         self.oled.text_center(now.strftime("%H:%M"), "#3333cc", font=self.font_clk)
@@ -202,6 +212,8 @@ class Clock(object):
         self.oled.draw.line([(0, 95), (cpu_bar, 95)], fill=cpu_color)
 
     def d_mplayer(self):
+        if self.in_menu or self.in_volume:
+            return
         # refresh every minute
         self.mpd_thread.lock.acquire()
         status = self.mpd_thread.status
@@ -244,6 +256,7 @@ class Clock(object):
         self.oled.draw.rectangle([(44, 3), (44+volume_bar, 5)], fill="#006600")
 
     def d_volume(self, vol):
+        self.in_volume = True
         if vol <= 100 and vol >= 0:
             self.mpd_thread.vol(vol)
         if self.oled.contrast != 10:
@@ -251,6 +264,7 @@ class Clock(object):
         new_vol = min(max(vol, 0), 100)
         self.oled.text_center_y(15, "volume", "#006600", font=self.font_txt)
         self.oled.text_center_y(25, "%s %%" % (new_vol,), "#3333cc", font=self.font_big)
+        self.freeze = 2
 
     def d_menu(self, click=False, pos=0):
         if self.oled.contrast != 10:
@@ -260,49 +274,104 @@ class Clock(object):
         if not self.in_menu:
             # reinit cursor
             self.menu_cursor = 0
-            self.menu_sub = None
-        if self.menu_sub == None:
-            cur_menu = self.menu
-        else:
-            cur_menu = self.menu[self.menu_sub].items
+            self.menu_sub = []
+        cur_menu = self.menu
+        for menu_sub in self.menu_sub:
+            cur_menu = cur_menu[menu_sub].items
         if self.in_menu and click:
             selected_item = cur_menu[self.menu_cursor]
             if isinstance(selected_item, menu.SubMenu):
                 # is menu
-                self.menu_sub = self.menu_cursor
+                self.menu_sub.append(self.menu_cursor)
                 cur_menu = selected_item.items
+                self.menu_cursor = 0
+            elif isinstance(selected_item, menu.Screen):
+                selected_item.function()
+                self.clear()
+                self.in_menu = False
+                self.freeze = 0
+                return
+            elif isinstance(selected_item, menu.MenuBack):
+                if len(self.menu_sub) > 0:
+                    self.menu_sub.pop()
+                    cur_menu = self.menu
+                    for menu_sub in self.menu_sub:
+                        cur_menu = cur_menu[menu_sub].items
+                else:
+                    # exit menu
+                    self.clear()
+                    self.in_menu = False
+                    self.freeze = 0
+                    return
                 self.menu_cursor = 0
             else:
                 if selected_item.function():
                     return
                 if selected_item.goback:
                     self.clear()
-                    self.oled.text_center_y(35, selected_item.name, "#000099", font=self.font_txt)
+                    self.oled.text_center_y(73, selected_item.name,
+                                            "#000099", font=self.font_txt)
                     self.in_menu = False
                     self.freeze = 0
                     return
         self.oled.text_center_y(0, "M E N U", "#D93BD6", font=self.font_txt)
         self.menu_cursor = (self.menu_cursor + pos) % len(cur_menu)
 
-        font = ImageFont.truetype("/usr/share/fonts/truetype/droid/DroidSansMono.ttf", 14)
+        font = ImageFont.truetype("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", 14)
 
-        for i, item in enumerate(cur_menu):
-            if i == self.menu_cursor:
+        cursor = self.menu_cursor
+        offset = max(0, cursor - (self.menu_max_items-1))
+        if offset > 0:
+            cursor -= offset
+            self.oled.draw_text(122, 0, u"↑", "white", font=font)
+        menu_high = offset + self.menu_max_items
+        if menu_high < len(cur_menu):
+            self.oled.draw_text(122, 77, u"↓", "white", font=font)
+        for i, item in enumerate(cur_menu[offset:menu_high]):
+            if i == cursor:
                 self.oled.draw_text(0, 15+i*14, ">", "white", font=font)
-                self.oled.draw_text(10, 15+i*14, item.name.upper(), "#009900", font=font)
+                self.oled.draw_text(10, 15+i*14, item.name.upper(),
+                                    "#009900", font=font)
             else:
-                self.oled.draw_text(10, 15+i*14, item.name.upper(), "#222299", font=font)
+                self.oled.draw_text(10, 15+i*14, item.name.upper(),
+                                    "#222299", font=font)
         self.in_menu = True
 
-    def d_stats(self):
-        self.oled.clear()
-        self.oled.text_center_y(0, "stats", "#D93BD6", font=self.font_txt)
-        ip = self.hwm_thread.get_ip_address('wlan0')
-        essid = self.hwm_thread.wifi.getEssid()
-        self.oled.draw_text(0, 15, "ip: %s" % ip, "#ffffff")
-        self.oled.draw_text(0, 25, "essid: %s" % essid, "#ffffff")
-        
-        return True
+    def menu_playlist(self):
+        with self.mpd_thread.lock:
+            playlist = self.mpd_thread.playlist
+        pl_menu = []
+        for song in playlist:
+            if 'title' in song:
+                pl_menu.append(menu.Action(song['title'],
+                               self.mpd_thread.play,
+                               arg=song['pos']))
+            elif 'file' in song:
+                pl_menu.append(menu.Action(song['file'],
+                               self.mpd_thread.play,
+                               arg=song['pos']))
+        return pl_menu
+
+    def d_info(self):
+        while not self.input_thread.has_input.is_set():
+            self.oled.clear()
+            self.oled.text_center_y(0, "info", "#D93BD6", font=self.font_txt)
+            ip = self.hwm_thread.get_ip_address('wlan0')
+            essid = self.hwm_thread.wifi.getEssid()
+            with self.hwm_thread.lock:
+                signal = self.hwm_thread.wifi_signal
+            w, h = self.oled.draw_text(0, 15, "version:", "#ffffff")
+            self.oled.draw_text(w+2, 15, "%s" % (__VERSION__,), "#00ff00")
+
+            w, h = self.oled.draw_text(0, 25, "IP:", "#ffffff")
+            self.oled.draw_text(w+2, 25, "%s" % ip, "#00ff00")
+            w, h = self.oled.draw_text(0, 35, "Wifi Name:", "#ffffff")
+            self.oled.draw_text(w+2, 35, "%s" % essid, "#00ff00")
+            w, h = self.oled.draw_text(0, 45, "Wifi Strength:", "#ffffff")
+            self.oled.draw_text(w+2, 45, "%s%%" % signal, "#00ff00")
+
+            self.display()
+            self.input_thread.has_input.wait(30)
 
     def alarm_on(self):
         self.alarm = "07:00"
@@ -395,11 +464,7 @@ if __name__ == '__main__':
                 log.info("process: %.4f sleep: %.4f total: %.4f overhead!"
                          % (d, s, d+s))
     except KeyboardInterrupt, e:
-        clk.clear()
-        clk.oled.text_center("Exiting...", "blue", size=30)
-        clk.display()
-        clk.stop_all()
-        clk.oled.fillScreen(0)
+        pass  #clk.shutdown()
     except:
         clk.stop_all()
         clk.clear()

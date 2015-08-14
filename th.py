@@ -72,8 +72,11 @@ class MPlayerControl(Thread):
     def run(self):
         self.log.debug("%s thread started" % self.name)
         if self.action is "play":
-            self.log.debug("play song 4")
-            self.mpd.play(7)
+            self.log.debug("play")
+            if self.arg:
+                self.mpd.play(self.arg)
+            else:
+                self.mpd.play()
         if self.action is "stop":
             self.log.debug("stop playing")
             self.mpd.stop()
@@ -106,7 +109,7 @@ class MPlayerControl(Thread):
             # load "clock" playlist and play song n4
             self.mpd.clear()
             self.mpd.load("clock")
-            self.mpd.play(8)
+            self.mpd.play(7)
             self.log.debug("play song 4, and raising volume...")
             while volume < (50 + step*20) and not self.must_stop.is_set():
                 self.must_stop.wait(60)
@@ -135,6 +138,7 @@ class MPlayer(Thread):
                 self.title = "%s - %s" % (song['title'], song['name'], )
             elif 'title' in song and 'artist' in song:
                 self.title = "%s - %s" % (song['title'], song['artist'], )
+        self.playlist = self.mpd.playlistinfo()
         self.mpc = None
 
     def run(self):
@@ -148,14 +152,18 @@ class MPlayer(Thread):
                     if status['state'] == "play":
                         song = self.mpd.currentsong()
                         if 'title' in song and 'name' in song:
-                            title = "%s - %s" % (song['title'], song['name'], )
+                            title = "%s - %s" % (song['title'], song['name'])
                         elif 'title' in song and 'artist' in song:
-                            title = "%s - %s" % (song['title'], song['artist'], )
-                    self.log.debug("mpd event: %s state: %s song: %s" % (events, status['state'], title))
+                            title = "%s - %s" % (song['title'], song['artist'])
+                    self.log.debug("mpd event: %s state: %s song: %s"
+                                   % (events, status['state'], title))
                     self.lock.acquire()
                     self.title = title
                     self.status = status
                     self.lock.release()
+                if 'playlist' in events:
+                    with self.lock:
+                        self.playlist = self.mpd.playlistinfo()
             except ConnectionError, e:
                 # reconnect
                 if self.must_stop.is_set():
@@ -168,10 +176,10 @@ class MPlayer(Thread):
         super(MPlayer, self).stop()
         self.mpd.close()
 
-    def play(self):
+    def play(self, pos=None):
         if self.mpc and self.mpc.is_alive():
             self.mpc.must_stop.set()
-        self.mpc = MPlayerControl("play")
+        self.mpc = MPlayerControl("play", pos)
         self.mpc.start()
 
     def next(self):
