@@ -156,16 +156,22 @@ class SSD1351:
         self.command(self.CMD_PRECHARGE, 0x32)
         self.command(self.CMD_VCOMH, 0x05)
         self.command(self.CMD_NORMALDISPLAY)
-        self.command(self.CMD_CONTRASTABC, [0xC8, 0xc8, 0xC8])
-        self.set_contrast(self.contrast)
+        self.set_contrast(200) # c8 -> 200
+        self.set_master_contrast(10)
         self.command(self.CMD_SETVSL, [0xA0, 0xB5, 0x55])
 
         self.command(self.CMD_PRECHARGE2, 0x01)
         self.command(self.CMD_DISPLAYON)
 
-    def set_contrast(self, level):
+    def set_master_contrast(self, level):
+        # 0 to 15
         level &= 0x0F
         self.command(self.CMD_CONTRASTMASTER, level)
+
+    def set_contrast(self, level):
+        # 0 to 255
+        level &= 0xFF
+        self.command(self.CMD_CONTRASTABC, [level, level, level])
         self.contrast = level
 
     def invert_display(self):
@@ -388,87 +394,15 @@ if __name__ == '__main__':
     DC_PIN = 16
     led = ssd1351.SSD1351(reset_pin=15, dc_pin=16, rows=96)
     led.begin()
+    led.fillScreen(0)
+    color = 0x000000
+    bands = 10
+    color_step = 0xFF / bands
+    color_width = led.cols / 3
 
-    now = datetime.datetime.now()
-    led.text_center("init...", "red", size=16)
-    led.display()
-    led.clear()
-    font = ImageFont.truetype("lcd.ttf", 58)
+    for x in range(0, led.rows, led.rows/bands):
+        led.rawFillRect(0, x, color_width, bands, color&0xff0000)
+        led.rawFillRect(color_width, x, color_width*2, bands, color&0xff00)
+        led.rawFillRect(color_width*2, x, color_width*3, bands, color&0xff)
+        color = (color + (color_step << 16) + (color_step << 8) + (color_step)) & 0xFFFFFF
 
-    # clock
-    led.text_center(now.strftime("%H:%M"), "#3333cc", font=font)
-
-    radio = [
-        Image.open("radio_0.png"),
-        Image.open("radio_1.png"),
-        Image.open("radio_2.png"),
-        Image.open("radio_3.png")]
-    led.im.paste(radio[random.randint(0, 3)], (0, 0))
-    led.draw.line([(0, 16), (128, 16)], fill="#000066")
-
-
-    hours = now.hour
-    minutes = now.minute
-    tick = True
-    # time sync
-    time.sleep(1-datetime.datetime.now().microsecond/1000.0/1000.0)
-    REFRESH_RATE = 1
-    SCROLLING_SPEED = 8
-    scroll_txt = led.cols
-    try:
-        led.display()
-        while True:
-            now = datetime.datetime.now()
-            led.clear()
-            resync = 0
-            # headbar
-            led.im.paste(radio[random.randint(0, 3)], (0, 0))
-            led.draw.line([(0, 16), (128, 16)], fill="#000066")
-            clock_x, clock_y = led.text_center(now.strftime("%H:%M"), "#3333cc", font=font)
-            if hours != now.hour:
-                # refresh hours
-                hours = now.hour
-                led.display(clock_x, clock_y, clock_x+50, clock_y+41)
-            if minutes != now.minute:
-                # refresh minutes
-                minutes = now.minute
-                led.display(clock_x+77, clock_y, clock_x+128, clock_y+41)
-                if (now.microsecond > 100000):
-                    resync = 0 - (now.microsecond/1000.0/1000.0)
-            # refresh seconds
-            # led.display(clock_x+90, clock_y+1, clock_x+118, clock_y+26)
-            if tick:
-                led.rawFillRect(clock_x+59, clock_y+10, 6, 25, 0)
-                tick = False
-            else:
-                led.display(clock_x+59, clock_y+10, clock_x+65, clock_y+34)
-                tick = True
-            # add everything else here ...
-
-            cpu = psutil.cpu_percent()
-            cpu_bar = cpu / 100.0 * led.cols
-            cpu_color = "green"
-            if cpu > 50:
-                cpu_color = "yellow"
-            if cpu >= 85:
-                cpu_color = "red"
-            led.draw.line([(0, 95), (cpu_bar, 95)], fill=cpu_color)
-            led.display(0, 95, 128, 95)
-
-            t_w, t_h = led.draw_text(scroll_txt, 70, " super long and boring text", "#cc00cc", size=14)
-            led.display(scroll_txt, 70, scroll_txt+t_w+SCROLLING_SPEED, 70+t_h)
-            scroll_txt -= SCROLLING_SPEED
-            if scroll_txt <= 0 - SCROLLING_SPEED - t_w:
-                scroll_txt = led.cols
-            os.system('clear')
-            led.dump_disp2()
-            exit()
-            # end here
-            d = (datetime.datetime.now()-now).microseconds / 1000.0 / 1000.0
-            s = REFRESH_RATE - d + resync
-            if s > 0:
-                time.sleep(s)
-            if resync:
-                log.info("process: %.4f sleep: %.4f total: %.4f cpu: %.2f resync: %.2fms" % (d, s, d+s, cpu, resync*1000))
-    except KeyboardInterrupt, e:
-        led.fillScreen(0)

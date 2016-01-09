@@ -14,7 +14,7 @@ import th
 import threading
 import menu
 
-__VERSION__ = "0.5"
+__VERSION__ = "0.6"
 log = logging.getLogger("main")
 logging.basicConfig(
     format='%(asctime)-23s - %(levelname)-7s - %(name)s - %(message)s')
@@ -28,6 +28,8 @@ class Clock(object):
     """docstring for Clock"""
     alarm = ""
     alarm_running = False
+    B_FULL = 200
+    B_DIMMED = 25
 
     def __init__(self, oled):
         self.log = logging.getLogger(self.__class__.__name__)
@@ -46,7 +48,7 @@ class Clock(object):
                                 "red", size=size)
         title_y += size + 2
         self.oled.display()
-        self.oled.set_contrast(10)
+        self.oled.set_contrast(self.B_FULL)
         self.clear = self.oled.clear
         self.display = self.oled.display
         # wifi signal ressourses
@@ -131,7 +133,9 @@ class Clock(object):
                              menu.SubMenu("playlist", self.menu_playlist()),
                          ]),
             menu.Screen("info", self.d_info),
-            menu.Action("alarm 7h00", self.alarm_on, goback=True),
+	    menu.Action("alarm 5h00", self.alarm_on, arg="04:45", goback=True),
+	    menu.Action("alarm 6h15", self.alarm_on, arg="06:15", goback=True),
+            menu.Action("alarm 7h00", self.alarm_on, arg="07:00", goback=True),
             menu.Action("alarm off", self.alarm_off, goback=True),
             menu.Command("shutdown", "poweroff", goback=True),
             menu.MenuBack("Exit")
@@ -227,8 +231,8 @@ class Clock(object):
                 if self.scroll_txt <= 0 - self.SCROLLING_SPEED - t_w:
                     self.scroll_txt = self.oled.cols
             # draw play icon here...
-            if self.oled.contrast != 10:
-                self.oled.set_contrast(10)
+            if self.oled.contrast != self.B_FULL:
+                self.oled.set_contrast(self.B_FULL)
         else:
             # draw pause or whatever icon here...
             # alarm is not running anymore (if any)
@@ -236,8 +240,8 @@ class Clock(object):
                 self.alarm_running = False
             # reset scrolling
             self.scroll_txt = self.oled.cols
-            if self.oled.contrast != 1:
-                self.oled.set_contrast(1)
+            if self.oled.contrast != self.B_DIMMED:
+                self.oled.set_contrast(self.B_DIMMED)
 
     def d_temp(self):
         self.temp_node.lock.acquire()
@@ -259,16 +263,16 @@ class Clock(object):
         self.in_volume = True
         if vol <= 100 and vol >= 0:
             self.mpd_thread.vol(vol)
-        if self.oled.contrast != 10:
-            self.oled.set_contrast(10)
+        if self.oled.contrast != self.B_FULL:
+            self.oled.set_contrast(self.B_FULL)
         new_vol = min(max(vol, 0), 100)
         self.oled.text_center_y(15, "volume", "#006600", font=self.font_txt)
         self.oled.text_center_y(25, "%s %%" % (new_vol,), "#3333cc", font=self.font_big)
         self.freeze = 2
 
     def d_menu(self, click=False, pos=0):
-        if self.oled.contrast != 10:
-            self.oled.set_contrast(10)
+        if self.oled.contrast != self.B_FULL:
+            self.oled.set_contrast(self.B_FULL)
         if click:
             self.freeze = 4
         if not self.in_menu:
@@ -280,6 +284,7 @@ class Clock(object):
             cur_menu = cur_menu[menu_sub].items
         if self.in_menu and click:
             selected_item = cur_menu[self.menu_cursor]
+            self.log.debug("selected item: %s" % selected_item.name)
             if isinstance(selected_item, menu.SubMenu):
                 # is menu
                 self.menu_sub.append(self.menu_cursor)
@@ -316,7 +321,7 @@ class Clock(object):
                     return
         self.oled.text_center_y(0, "M E N U", "#D93BD6", font=self.font_txt)
         self.menu_cursor = (self.menu_cursor + pos) % len(cur_menu)
-
+        # self.log.debug("menu cursor: %s" % self.menu_cursor)
         font = ImageFont.truetype("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", 14)
 
         cursor = self.menu_cursor
@@ -338,6 +343,7 @@ class Clock(object):
         self.in_menu = True
 
     def menu_playlist(self):
+        self.log.debug("generating playlist menu...")
         with self.mpd_thread.lock:
             playlist = self.mpd_thread.playlist
         pl_menu = []
@@ -357,24 +363,39 @@ class Clock(object):
             self.oled.clear()
             self.oled.text_center_y(0, "info", "#D93BD6", font=self.font_txt)
             ip = self.hwm_thread.get_ip_address('wlan0')
-            essid = self.hwm_thread.wifi.getEssid()
-            with self.hwm_thread.lock:
-                signal = self.hwm_thread.wifi_signal
+	    if ip:
+                essid = self.hwm_thread.wifi.getEssid()
+                with self.hwm_thread.lock:
+                    signal = self.hwm_thread.wifi_signal
+		netcolor = "#00ff00"
+	    else:
+	        essid = "None"
+		signal = 0
+		netcolor = "#ff0000"
             w, h = self.oled.draw_text(0, 15, "version:", "#ffffff")
             self.oled.draw_text(w+2, 15, "%s" % (__VERSION__,), "#00ff00")
 
             w, h = self.oled.draw_text(0, 25, "IP:", "#ffffff")
-            self.oled.draw_text(w+2, 25, "%s" % ip, "#00ff00")
+            self.oled.draw_text(w+2, 25, "%s" % ip, netcolor)
             w, h = self.oled.draw_text(0, 35, "Wifi Name:", "#ffffff")
-            self.oled.draw_text(w+2, 35, "%s" % essid, "#00ff00")
+            self.oled.draw_text(w+2, 35, "%s" % essid, netcolor)
             w, h = self.oled.draw_text(0, 45, "Wifi Strength:", "#ffffff")
-            self.oled.draw_text(w+2, 45, "%s%%" % signal, "#00ff00")
+            self.oled.draw_text(w+2, 45, "%s%%" % signal, netcolor)
+
+            w, h = self.oled.draw_text(0, 55, "Alarm:", "#ffffff")
+	    if self.alarm is not "":
+	        self.oled.draw_text(w+2, 55, "%s" % self.alarm, "#00ff00")
+	    else:
+	        self.oled.draw_text(w+2, 55, "%s" % "OFF", "#ff0000")
 
             self.display()
             self.input_thread.has_input.wait(30)
 
-    def alarm_on(self):
-        self.alarm = "07:00"
+    def d_brightness(self):
+        pass
+
+    def alarm_on(self, hour="07:00"):
+        self.alarm = hour
         self.freeze = 0
 
     def alarm_off(self):

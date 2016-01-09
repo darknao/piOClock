@@ -54,20 +54,27 @@ class HWmonitor(Thread):
 
     def get_ip_address(self, ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        return socket.inet_ntoa(fcntl.ioctl(
-            s.fileno(),
-            0x8915,  # SIOCGIFADDR
-            struct.pack('256s', ifname[:15])
-        )[20:24])
+	try:
+            return socket.inet_ntoa(fcntl.ioctl(
+                s.fileno(),
+                0x8915,  # SIOCGIFADDR
+                struct.pack('256s', ifname[:15])
+              )[20:24])
+	except:
+	    return None
 
 
 class MPlayerControl(Thread):
     def __init__(self, action=None, arg=None):
         super(MPlayerControl, self).__init__()
         self.mpd = MPDClient()
-        self.mpd.connect("localhost", 6600)
-        self.action = action
-        self.arg = arg
+	try:
+            self.mpd.connect("localhost", 6600)
+	except:
+	    self.action = "nothing"
+	else:
+            self.action = action
+            self.arg = arg
 
     def run(self):
         self.log.debug("%s thread started" % self.name)
@@ -146,6 +153,7 @@ class MPlayer(Thread):
         while not self.must_stop.is_set():
             try:
                 events = self.mpd.idle()
+                self.log.debug("events: %s" % events)
                 if 'player' in events:
                     status = self.mpd.status()
                     title = ""
@@ -164,6 +172,7 @@ class MPlayer(Thread):
                 if 'playlist' in events:
                     with self.lock:
                         self.playlist = self.mpd.playlistinfo()
+                        self.log.debug("updating playlist")
             except ConnectionError, e:
                 # reconnect
                 if self.must_stop.is_set():
